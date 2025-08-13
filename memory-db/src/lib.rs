@@ -27,8 +27,11 @@ use hash_db::{
 #[cfg(feature = "std")]
 use std::{
 	borrow::Borrow, cmp::Eq, collections::hash_map::Entry, collections::HashMap as Map, hash,
-	hash::RandomState, marker::PhantomData, mem,
+	marker::PhantomData, mem,
 };
+
+#[cfg(feature = "std")]
+use foldhash::quality::RandomState;
 
 #[cfg(not(feature = "std"))]
 use hashbrown::{hash_map::Entry, HashMap as Map};
@@ -245,11 +248,12 @@ pub fn legacy_prefixed_key<H: KeyHasher>(key: &H::Out, prefix: Prefix) -> Vec<u8
 	prefixed_key
 }
 
-impl<H, KF, T> Default for MemoryDB<H, KF, T, RandomState>
+impl<H, KF, T, S> Default for MemoryDB<H, KF, T, S>
 where
 	H: KeyHasher,
 	T: for<'a> From<&'a [u8]>,
 	KF: KeyFunction<H>,
+	S: BuildHasher + Default,
 {
 	fn default() -> Self {
 		Self::from_null_node(&[0u8][..], [0u8][..].into())
