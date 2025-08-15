@@ -890,3 +890,311 @@ fn test_two_assets_memory_db_inner_2<T: TrieLayout>() {
 	assert_eq!(state.get(key2.as_ref()).unwrap().unwrap(), data2);
 	assert_eq!(state.get(key3.as_ref()).unwrap().unwrap(), data3);
 }
+
+/// Helper function to analyze node type from raw data
+fn analyze_node_type<T: TrieLayout>(data: &[u8]) -> String {
+	use trie_db::NodeCodec;
+
+	// Helper to format partial key
+	let format_partial = |partial: &trie_db::NibbleSlice| -> String {
+		// Convert nibbles to bytes for display
+		let nibbles: Vec<u8> = (0..partial.len()).map(|i| partial.at(i)).collect();
+		hex::encode(&nibbles)
+	};
+
+	// Helper to format value
+	let format_value = |val: &trie_db::node::Value| -> String {
+		match val {
+			trie_db::node::Value::Inline(bytes) =>
+				if bytes.len() > 20 {
+					format!("0x{}... ({} bytes)", hex::encode(&bytes[..10]), bytes.len())
+				} else {
+					format!("0x{} ({} bytes)", hex::encode(bytes), bytes.len())
+				},
+			trie_db::node::Value::Node(_) => "(node reference)".to_string(),
+		}
+	};
+
+	match T::Codec::decode(data) {
+		Ok(node) => match node {
+			trie_db::node::Node::Empty => "Empty".to_string(),
+			trie_db::node::Node::Leaf(partial, value) => {
+				let partial_hex = format_partial(&partial);
+				let value_preview = format_value(&value);
+				format!("Leaf(partial=0x{}, value={})", partial_hex, value_preview)
+			},
+			trie_db::node::Node::Extension(partial, _) => {
+				let partial_hex = format_partial(&partial);
+				format!("Extension(partial=0x{})", partial_hex)
+			},
+			trie_db::node::Node::Branch(children, value) => {
+				let child_count = children.iter().filter(|c| c.is_some()).count();
+				let value_info = match value {
+					Some(val) => format!(", value={}", format_value(&val)),
+					None => "".to_string(),
+				};
+				format!("Branch(children={}{})", child_count, value_info)
+			},
+			trie_db::node::Node::NibbledBranch(partial, children, value) => {
+				let child_count = children.iter().filter(|c| c.is_some()).count();
+				let partial_hex = format_partial(&partial);
+				let value_info = match value {
+					Some(val) => format!(", value={}", format_value(&val)),
+					None => "".to_string(),
+				};
+				format!(
+					"NibbledBranch(partial=0x{}, children={}{})",
+					partial_hex, child_count, value_info
+				)
+			},
+		},
+		Err(_) => "Invalid/Unparseable".to_string(),
+	}
+}
+
+/// Helper function to dump trie structure for debugging with node type analysis
+fn dump_trie_structure<T: TrieLayout>(
+	memdb: &PrefixedMemoryDB<T>,
+	root: &<T::Hash as Hasher>::Out,
+) {
+	use hash_db::Hasher;
+
+	println!("=== Trie Structure Dump ===");
+	println!("Root hash: 0x{}", hex::encode(root.as_ref() as &[u8]));
+
+	let keys = memdb.keys();
+	println!("Total nodes in DB: {}", keys.len());
+
+	for (key, ref_count) in keys.iter() {
+		if *ref_count > 0 {
+			// First show the raw DB key
+			let db_key_hex = hex::encode(key.as_ref() as &[u8]);
+
+			// Convert Vec<u8> key to the proper hash type for lookup
+			let key_bytes = key.as_ref() as &[u8];
+			let hash_len = <T::Hash as Hasher>::Out::default().as_ref().len();
+
+			if key_bytes.len() == hash_len {
+				// Standard hash - no prefix
+				let mut hash_out = <T::Hash as Hasher>::Out::default();
+				hash_out.as_mut().copy_from_slice(key_bytes);
+
+				// Try to get the node data and analyze it
+				let node_info = if let Some(data) =
+					hash_db::HashDBRef::get(memdb, &hash_out, hash_db::EMPTY_PREFIX)
+				{
+					format!(" -> {}", analyze_node_type::<T>(&data))
+				} else {
+					" -> (data not found)".to_string()
+				};
+
+				println!("DB key: 0x{} (hash only)", db_key_hex);
+				println!("Node hash: 0x{}, ref_count: {}{}", db_key_hex, ref_count, node_info);
+			} else if key_bytes.len() > hash_len {
+				// Prefixed hash - for PrefixedKey, the format is: prefix_bytes + hash_bytes
+				// We need to find where the prefix ends and hash begins
+				// The hash is always the last hash_len bytes
+				let prefix_bytes = &key_bytes[..key_bytes.len() - hash_len];
+				let actual_hash = &key_bytes[key_bytes.len() - hash_len..];
+
+				let mut hash_out = <T::Hash as Hasher>::Out::default();
+				hash_out.as_mut().copy_from_slice(actual_hash);
+
+				// Reconstruct the prefix tuple format
+				let prefix = (prefix_bytes, None);
+				let node_info =
+					if let Some(data) = hash_db::HashDBRef::get(memdb, &hash_out, prefix) {
+						format!(" -> {}", analyze_node_type::<T>(&data))
+					} else {
+						" -> (prefixed data not accessible)".to_string()
+					};
+
+				println!(
+					"DB key: 0x{} (prefix: 0x{} | hash: 0x{})",
+					db_key_hex,
+					hex::encode(prefix_bytes),
+					hex::encode(actual_hash)
+				);
+				println!(
+					"Node hash: 0x{}, prefix: 0x{}, ref_count: {}{}",
+					hex::encode(actual_hash),
+					hex::encode(prefix_bytes),
+					ref_count,
+					node_info
+				);
+			} else {
+				println!("DB key: 0x{}", db_key_hex);
+				println!(
+					"Node hash: 0x{}, ref_count: {} -> (hash too short: {} bytes, expected {})",
+					db_key_hex,
+					ref_count,
+					key_bytes.len(),
+					hash_len
+				);
+			}
+		}
+	}
+	println!("========================");
+}
+
+fn dump_recorder_accesses<T: TrieLayout>(
+	recorded_entries: &[trie_db::recorder::Record<<T::Hash as hash_db::Hasher>::Out>],
+	title: &str,
+) where
+	T::Hash: hash_db::Hasher,
+{
+	println!("\n{} {} database accesses:", title, recorded_entries.len());
+
+	for (i, entry) in recorded_entries.iter().enumerate() {
+		let node_type = analyze_node_type::<T>(&entry.data);
+		println!(
+			"  Access {}: hash=0x{}, data_len={} bytes -> {}",
+			i + 1,
+			hex::encode(&entry.hash.as_ref()[..8]),
+			entry.data.len(),
+			node_type
+		);
+	}
+}
+
+#[test]
+fn test_storage_root_computation_loads() {
+	test_storage_root_computation_loads_internal::<HashedValueNoExt>();
+}
+
+fn test_storage_root_computation_loads_internal<T: TrieLayout>()
+where
+	T: TrieLayout,
+	T::Hash: Hasher,
+{
+	use trie_db::Recorder;
+
+	println!(">>>>>>>> Using no-extension layout: {}", std::any::type_name::<T>());
+
+	let mut memdb = PrefixedMemoryDB::<T>::default();
+	let mut root = Default::default();
+
+	// Step 1: Create a complex trie structure with nodes stored as hashes
+	{
+		let mut trie = TrieDBMutBuilder::<T>::new(&mut memdb, &mut root).build();
+
+		// Create a structure that will force some nodes to be stored as hashes
+		// when we later access them during merging
+		trie.insert(&[0xAA, 0xBB, 0x01], b"11111xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_1")
+			.unwrap();
+		trie.insert(&[0xAA, 0xBB, 0x02], b"22222xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_2")
+			.unwrap();
+		trie.insert(&[0xAA, 0xBB, 0x03], b"33333xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_3")
+			.unwrap();
+		trie.insert(&[0xAA, 0xCC, 0x01], b"44444xxxxxxxxxx_xxxxxxxxxxxxxxx_another_branch")
+			.unwrap();
+
+		trie.commit();
+	}
+
+	println!(">>>>>>>> Initial structure:");
+	dump_trie_structure::<T>(&memdb, &root);
+
+	// Step 2: Clone the database and perform READ operations with recorder
+	// This will show what loads occur during normal get() operations
+	let mut memdb_clone = memdb.clone();
+	let root_clone = root;
+
+	let mut read_recorder = Recorder::<T>::new();
+	let read_recorded_entries = {
+		let trie = TrieDBBuilder::<T>::new(&memdb_clone, &root_clone)
+			.with_recorder(&mut read_recorder)
+			.build();
+
+		println!("\n>>>>>>>> READ operations on initial database");
+
+		// Read some values
+		if let Some(val) = trie.get(&[0xAA, 0xBB, 0x02]).unwrap() {
+			println!("Read [0xAA, 0xBB, 0x02] = {:?}", &val[..20]);
+		}
+		if let Some(val) = trie.get(&[0xAA, 0xBB, 0x03]).unwrap() {
+			println!("Read [0xAA, 0xBB, 0x03] = {:?}", &val[..20]);
+		}
+
+		// Drop trie to release the recorder borrow
+		drop(trie);
+
+		// Now we can access the recorder
+		read_recorder.drain()
+	};
+
+	dump_recorder_accesses::<T>(&read_recorded_entries, ">>>>>>>> READ operations captured");
+
+	// Step 3: Clone the database and perform REMOVE operations with recorder
+	// This will show what loads occur during normal remove() operations WITHOUT commit
+	let mut memdb_clone = memdb.clone();
+	let mut root_clone = root;
+
+	let mut remove_recorder = Recorder::<T>::new();
+	let remove_recorded_entries = {
+		let mut trie = TrieDBMutBuilder::<T>::from_existing(&mut memdb_clone, &mut root_clone)
+			.with_recorder(&mut remove_recorder)
+			.build();
+
+		println!("\n>>>>>>>> REMOVE operations on initial database (no commit)");
+
+		// Remove two children, leaving only one
+		// This should show what loads happen during remove() but WITHOUT commit
+		trie.remove(&[0xAA, 0xBB, 0x02]).unwrap();
+		trie.remove(&[0xAA, 0xBB, 0x03]).unwrap();
+
+		// Note: NO commit() call here - we want to see just the remove operations
+
+		// Drop trie to release the recorder borrow
+		drop(trie);
+
+		// Now we can access the recorder
+		remove_recorder.drain()
+	};
+
+	dump_recorder_accesses::<T>(&remove_recorded_entries, ">>>>>>>> REMOVE operations captured");
+
+	// Step 4: Now simulate delta_trie_root computation WITH RECORDER
+	// This will capture any additional loads during merging
+	let mut recorder = Recorder::<T>::new();
+	let recorded_entries = {
+		let mut trie = TrieDBMutBuilder::<T>::from_existing(&mut memdb, &mut root)
+			.with_recorder(&mut recorder)
+			.build();
+
+		println!("\n>>>>>>>> storage_root computation with removals");
+
+		// Remove two children, leaving only one
+		// This should trigger: (UsedIndex::One(a), None) case in fix()
+		// Which calls: self.cache(h, child_prefix)? -- THE ADDITIONAL LOAD!
+		trie.remove(&[0xAA, 0xBB, 0x02]).unwrap();
+		trie.remove(&[0xAA, 0xBB, 0x03]).unwrap();
+
+		// This commit will trigger the fix() method internally
+		// which may need to load nodes from DB that aren't in memory
+		trie.commit();
+
+		println!("Remaining items:");
+		assert_eq!(
+			trie.get(&[0xAA, 0xBB, 0x01]).unwrap().unwrap(),
+			b"11111xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_1"
+		);
+		assert_eq!(
+			trie.get(&[0xAA, 0xCC, 0x01]).unwrap().unwrap(),
+			b"44444xxxxxxxxxx_xxxxxxxxxxxxxxx_another_branch"
+		);
+		assert_eq!(trie.get(&[0xAA, 0xBB, 0x02]).unwrap(), None);
+		assert_eq!(trie.get(&[0xAA, 0xBB, 0x03]).unwrap(), None);
+
+		// Drop trie to release the recorder borrow
+		drop(trie);
+
+		// Now we can access the recorder
+		recorder.drain()
+	};
+
+	dump_recorder_accesses::<T>(&recorded_entries, ">>>>>>>> STORAGE ROOT computation captured");
+
+	println!("\n>>>>>>>> After storage root computation (merging occurred):");
+	dump_trie_structure::<T>(&memdb, &root);
+}
