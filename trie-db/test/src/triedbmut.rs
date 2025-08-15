@@ -1088,6 +1088,10 @@ where
 			.unwrap();
 		trie.insert(&[0xAA, 0xCC, 0x01], b"44444xxxxxxxxxx_xxxxxxxxxxxxxxx_another_branch")
 			.unwrap();
+		// trie.insert(&[0xAA, 0xBB, 0x01], b"branch_child_1").unwrap();
+		// trie.insert(&[0xAA, 0xBB, 0x02], b"branch_child_2").unwrap();
+		// trie.insert(&[0xAA, 0xBB, 0x03], b"branch_child_3").unwrap();
+		// trie.insert(&[0xAA, 0xCC, 0x01], b"another_branch").unwrap();
 
 		trie.commit();
 	}
@@ -1110,10 +1114,10 @@ where
 
 		// Read some values
 		if let Some(val) = trie.get(&[0xAA, 0xBB, 0x02]).unwrap() {
-			println!("Read [0xAA, 0xBB, 0x02] = {:?}", &val[..20]);
+			println!("Read [0xAA, 0xBB, 0x02] = {:?}", val);
 		}
 		if let Some(val) = trie.get(&[0xAA, 0xBB, 0x03]).unwrap() {
-			println!("Read [0xAA, 0xBB, 0x03] = {:?}", &val[..20]);
+			println!("Read [0xAA, 0xBB, 0x03] = {:?}", val);
 		}
 
 		// Drop trie to release the recorder borrow
@@ -1183,6 +1187,8 @@ where
 			trie.get(&[0xAA, 0xCC, 0x01]).unwrap().unwrap(),
 			b"44444xxxxxxxxxx_xxxxxxxxxxxxxxx_another_branch"
 		);
+		// assert_eq!(trie.get(&[0xAA, 0xBB, 0x01]).unwrap().unwrap(), b"branch_child_1");
+		// assert_eq!(trie.get(&[0xAA, 0xCC, 0x01]).unwrap().unwrap(), b"another_branch");
 		assert_eq!(trie.get(&[0xAA, 0xBB, 0x02]).unwrap(), None);
 		assert_eq!(trie.get(&[0xAA, 0xBB, 0x03]).unwrap(), None);
 
