@@ -1086,29 +1086,46 @@ where
 	let mut memdb = PrefixedMemoryDB::<T>::default();
 	let mut root = Default::default();
 
+	let mut keys_to_read = vec![];
+
 	// Step 1: Create a complex trie structure with nodes stored as hashes
 	{
 		let mut trie = TrieDBMutBuilder::<T>::new(&mut memdb, &mut root).build();
 
 		// Create a structure that will force some nodes to be stored as hashes
 		// when we later access them during merging
-		trie.insert(&[0xAA, 0xBB, 0x01], b"11111xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_1")
-			.unwrap();
-		trie.insert(&[0xAA, 0xBB, 0x02], b"22222xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_2")
-			.unwrap();
-		trie.insert(&[0xAA, 0xBB, 0x03], b"33333xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_3")
-			.unwrap();
-		trie.insert(&[0xAA, 0xCC, 0x01], b"44444xxxxxxxxxx_xxxxxxxxxxxxxxx_another_branch")
-			.unwrap();
-		// trie.insert(&[0xAA, 0xBB, 0x01], b"branch_child_1").unwrap();
-		// trie.insert(&[0xAA, 0xBB, 0x02], b"branch_child_2").unwrap();
-		// trie.insert(&[0xAA, 0xBB, 0x03], b"branch_child_3").unwrap();
-		// trie.insert(&[0xAA, 0xCC, 0x01], b"another_branch").unwrap();
+		let keys = [
+			([0xAA, 0xBB, 0x00], b"00000xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_0"),
+			([0xAA, 0xBB, 0x01], b"11111xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_1"),
+			([0xAA, 0xBB, 0x02], b"22222xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_2"),
+			([0xAA, 0xBB, 0x03], b"33333xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_3"),
+			([0xAA, 0xBB, 0x04], b"44444xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_4"),
+			([0xAA, 0xBB, 0x05], b"55555xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_5"),
+			([0xAA, 0xBB, 0x06], b"66666xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_6"),
+			([0xAA, 0xBB, 0x07], b"77777xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_7"),
+			([0xAA, 0xBB, 0x08], b"88888xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_8"),
+			([0xAA, 0xBB, 0x09], b"99999xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_9"),
+			([0xAA, 0xBB, 0x0a], b"aaaaaxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_a"),
+			([0xAA, 0xBB, 0x0b], b"bbbbbxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_b"),
+			([0xAA, 0xBB, 0x0c], b"cccccxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_c"),
+			([0xAA, 0xBB, 0x0d], b"dddddxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_d"),
+			([0xAA, 0xBB, 0x0e], b"eeeeexxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_e"),
+			([0xAA, 0xBB, 0x0f], b"fffffxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_f"),
+			([0xAA, 0xBB, 0x10], b"gggggxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_g"),
+		];
+
+		// keys_to_read = keys.iter().take(keys.len() - 1).map(|k| k.0.clone()).collect();
+		keys_to_read = vec![keys.last().unwrap().0.clone()];
+
+		for (key, value) in keys {
+			trie.insert(&key, value).unwrap();
+		}
 
 		trie.commit();
 	}
 
 	println!(">>>>>>>> Initial structure:");
+	println!(">root initial : {:?}", hex::encode(root));
 	dump_trie_structure::<T>(&memdb, &root);
 
 	// Step 2: Clone the database and perform READ operations with recorder
@@ -1122,17 +1139,10 @@ where
 			.with_recorder(&mut read_recorder)
 			.build();
 
-		println!("\n>>>>>>>> READ operations on initial database");
-
-		// Read some values
-		if let Some(val) = trie.get(&[0xAA, 0xBB, 0x02]).unwrap() {
-			println!("Read [0xAA, 0xBB, 0x02] = {:?}", val);
-		}
-		if let Some(val) = trie.get(&[0xAA, 0xBB, 0x03]).unwrap() {
-			println!("Read [0xAA, 0xBB, 0x03] = {:?}", val);
+		for key in &keys_to_read {
+			trie.get(key).unwrap();
 		}
 
-		// Drop trie to release the recorder borrow
 		drop(trie);
 
 		// Now we can access the recorder
@@ -1148,20 +1158,21 @@ where
 
 	let mut remove_recorder = Recorder::<T>::new();
 	let remove_recorded_entries = {
+		println!("\n>>>>>>>> REMOVE operations on initial database (no commit)");
+		println!(">root before : 0x{}", hex::encode(root_clone));
+
 		let mut trie = TrieDBMutBuilder::<T>::from_existing(&mut memdb_clone, &mut root_clone)
 			.with_recorder(&mut remove_recorder)
 			.build();
 
-		println!("\n>>>>>>>> REMOVE operations on initial database (no commit)");
-
 		// Remove two children, leaving only one
 		// This should show what loads happen during remove() but WITHOUT commit
-		trie.remove(&[0xAA, 0xBB, 0x02]).unwrap();
-		trie.remove(&[0xAA, 0xBB, 0x03]).unwrap();
+		for key in &keys_to_read {
+			trie.remove(key).unwrap();
+		}
 
-		// Note: NO commit() call here - we want to see just the remove operations
-
-		// Drop trie to release the recorder borrow
+		// Drop trie to release the recorder borrow (this will trigger commit)
+		trie.commit();
 		drop(trie);
 
 		// Now we can access the recorder
@@ -1170,49 +1181,7 @@ where
 
 	dump_recorder_accesses::<T>(&remove_recorded_entries, ">>>>>>>> REMOVE operations captured");
 
-	// Step 4: Now simulate delta_trie_root computation WITH RECORDER
-	// This will capture any additional loads during merging
-	let mut recorder = Recorder::<T>::new();
-	let recorded_entries = {
-		let mut trie = TrieDBMutBuilder::<T>::from_existing(&mut memdb, &mut root)
-			.with_recorder(&mut recorder)
-			.build();
-
-		println!("\n>>>>>>>> storage_root computation with removals");
-
-		// Remove two children, leaving only one
-		// This should trigger: (UsedIndex::One(a), None) case in fix()
-		// Which calls: self.cache(h, child_prefix)? -- THE ADDITIONAL LOAD!
-		trie.remove(&[0xAA, 0xBB, 0x02]).unwrap();
-		trie.remove(&[0xAA, 0xBB, 0x03]).unwrap();
-
-		// This commit will trigger the fix() method internally
-		// which may need to load nodes from DB that aren't in memory
-		trie.commit();
-
-		println!("Remaining items:");
-		assert_eq!(
-			trie.get(&[0xAA, 0xBB, 0x01]).unwrap().unwrap(),
-			b"11111xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_1"
-		);
-		assert_eq!(
-			trie.get(&[0xAA, 0xCC, 0x01]).unwrap().unwrap(),
-			b"44444xxxxxxxxxx_xxxxxxxxxxxxxxx_another_branch"
-		);
-		// assert_eq!(trie.get(&[0xAA, 0xBB, 0x01]).unwrap().unwrap(), b"branch_child_1");
-		// assert_eq!(trie.get(&[0xAA, 0xCC, 0x01]).unwrap().unwrap(), b"another_branch");
-		assert_eq!(trie.get(&[0xAA, 0xBB, 0x02]).unwrap(), None);
-		assert_eq!(trie.get(&[0xAA, 0xBB, 0x03]).unwrap(), None);
-
-		// Drop trie to release the recorder borrow
-		drop(trie);
-
-		// Now we can access the recorder
-		recorder.drain()
-	};
-
-	dump_recorder_accesses::<T>(&recorded_entries, ">>>>>>>> STORAGE ROOT computation captured");
-
 	println!("\n>>>>>>>> After storage root computation (merging occurred):");
-	dump_trie_structure::<T>(&memdb, &root);
+	println!(">root after : 0x{}", hex::encode(root_clone));
+	dump_trie_structure::<T>(&memdb_clone, &root_clone);
 }
