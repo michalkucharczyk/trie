@@ -1043,9 +1043,21 @@ fn dump_recorder_accesses<T: TrieLayout>(
 ) where
 	T::Hash: hash_db::Hasher,
 {
-	println!("\n{} {} database accesses:", title, recorded_entries.len());
+	// Deduplicate entries by hash
+	let mut seen_hashes = std::collections::HashSet::new();
+	let unique_entries: Vec<_> = recorded_entries
+		.iter()
+		.filter(|entry| seen_hashes.insert(entry.hash.clone()))
+		.collect();
 
-	for (i, entry) in recorded_entries.iter().enumerate() {
+	println!(
+		"\n{} {} database accesses ({} unique):",
+		title,
+		recorded_entries.len(),
+		unique_entries.len()
+	);
+
+	for (i, entry) in unique_entries.iter().enumerate() {
 		let node_type = analyze_node_type::<T>(&entry.data);
 		println!(
 			"  Access {}: hash=0x{}, data_len={} bytes -> {}",
