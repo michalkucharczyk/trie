@@ -17,11 +17,11 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(not(feature = "std"))]
-use core::hash;
+use core::hash::{self, Hasher};
 #[cfg(feature = "std")]
 use std::fmt::Debug;
 #[cfg(feature = "std")]
-use std::hash;
+use std::hash::{self};
 
 #[cfg(feature = "std")]
 pub trait MaybeDebug: Debug {}
@@ -212,5 +212,47 @@ impl<'a, K, V> AsPlainDB<K, V> for &'a mut dyn PlainDB<K, V> {
 	}
 	fn as_plain_db_mut<'b>(&'b mut self) -> &'b mut (dyn PlainDB<K, V> + 'b) {
 		&mut **self
+	}
+}
+
+/// The `FoldHash` hash output type.
+pub type FoldHash = [u8; 8];
+
+/// A wrapper for foldhash that implements Default
+pub struct FoldStdHasher(foldhash::fast::FoldHasher);
+
+impl Default for FoldStdHasher {
+	fn default() -> Self {
+		Self(foldhash::fast::RandomState::default().build_hasher())
+	}
+}
+
+#[cfg(not(feature = "std"))]
+use core::hash::{BuildHasher as _, Hasher as _};
+#[cfg(feature = "std")]
+use std::hash::{BuildHasher as _, Hasher as _};
+impl hash::Hasher for FoldStdHasher {
+	fn finish(&self) -> u64 {
+		self.0.finish()
+	}
+
+	fn write(&mut self, bytes: &[u8]) {
+		self.0.write(bytes)
+	}
+}
+
+/// Concrete `Hasher` impl for the FoldHash algorithm
+#[derive(Default, Debug, Clone, PartialEq)]
+pub struct FoldHasher;
+
+impl Hasher for FoldHasher {
+	type Out = FoldHash;
+	type StdHasher = FoldStdHasher;
+	const LENGTH: usize = 8;
+
+	fn hash(x: &[u8]) -> Self::Out {
+		let mut hasher = foldhash::fast::RandomState::default().build_hasher();
+		hasher.write(x);
+		hasher.finish().to_le_bytes()
 	}
 }
