@@ -10,8 +10,8 @@ edition = "2018"
 
 [dependencies]
 foldhash = { version = "0.1.5", default-features = false }
+primitive-types = { version = "0.13", default-features = false }
 
 [features]
 default = ["std"]
-std = [
-]
+std = ["foldhash/std"]

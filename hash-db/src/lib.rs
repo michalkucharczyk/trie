@@ -17,11 +17,13 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(not(feature = "std"))]
-use core::hash::{self, Hasher};
+use core::hash;
 #[cfg(feature = "std")]
 use std::fmt::Debug;
 #[cfg(feature = "std")]
 use std::hash::{self};
+
+use primitive_types::H256;
 
 #[cfg(feature = "std")]
 pub trait MaybeDebug: Debug {}
@@ -215,9 +217,6 @@ impl<'a, K, V> AsPlainDB<K, V> for &'a mut dyn PlainDB<K, V> {
 	}
 }
 
-/// The `FoldHash` hash output type.
-pub type FoldHash = [u8; 8];
-
 /// A wrapper for foldhash that implements Default
 pub struct FoldStdHasher(foldhash::fast::FoldHasher);
 
@@ -241,18 +240,25 @@ impl hash::Hasher for FoldStdHasher {
 	}
 }
 
-/// Concrete `Hasher` impl for the FoldHash algorithm
+/// Generic `Hasher` impl for the FoldHash algorithm
 #[derive(Default, Debug, Clone, PartialEq)]
-pub struct FoldHasher;
+pub struct FoldHasher<H: Hasher>(core::marker::PhantomData<H>);
 
-impl Hasher for FoldHasher {
-	type Out = FoldHash;
-	type StdHasher = FoldStdHasher;
-	const LENGTH: usize = 8;
+impl<H: Hasher> Hasher for FoldHasher<H> {
+	type Out = H::Out;
+	type StdHasher = H::StdHasher;
+	const LENGTH: usize = H::LENGTH;
 
 	fn hash(x: &[u8]) -> Self::Out {
 		let mut hasher = foldhash::fast::RandomState::default().build_hasher();
 		hasher.write(x);
-		hasher.finish().to_le_bytes()
+		let hash_u64 = hasher.finish();
+
+		// Put the 8-byte hash at the beginning of the result
+		let mut result = H::Out::default();
+		let result_bytes = result.as_mut();
+		let copy_len = core::cmp::min(8, result_bytes.len());
+		result_bytes[..copy_len].copy_from_slice(&hash_u64.to_le_bytes()[..copy_len]);
+		result
 	}
 }

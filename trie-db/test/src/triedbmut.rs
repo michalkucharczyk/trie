@@ -894,6 +894,7 @@ fn test_two_assets_memory_db_inner_2<T: TrieLayout>() {
 /// Helper function to analyze node type from raw data
 fn analyze_node_type<T: TrieLayout>(data: &[u8]) -> String {
 	use trie_db::NodeCodec;
+	let data_size = data.len();
 
 	// Helper to format partial key
 	let format_partial = |partial: &trie_db::NibbleSlice| -> String {
@@ -943,8 +944,8 @@ fn analyze_node_type<T: TrieLayout>(data: &[u8]) -> String {
 					None => "".to_string(),
 				};
 				format!(
-					"NibbledBranch(partial=0x{}, children={}{})",
-					partial_hex, child_count, value_info
+					"NibbledBranch(partial=0x{}, children={}{}, bytes={})",
+					partial_hex, child_count, value_info, data_size
 				)
 			},
 		},
@@ -1094,31 +1095,39 @@ where
 
 		// Create a structure that will force some nodes to be stored as hashes
 		// when we later access them during merging
-		let keys = [
-			([0xAA, 0xBB, 0x00], b"00000xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_0"),
-			([0xAA, 0xBB, 0x01], b"11111xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_1"),
-			([0xAA, 0xBB, 0x02], b"22222xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_2"),
-			([0xAA, 0xBB, 0x03], b"33333xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_3"),
-			([0xAA, 0xBB, 0x04], b"44444xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_4"),
-			([0xAA, 0xBB, 0x05], b"55555xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_5"),
-			([0xAA, 0xBB, 0x06], b"66666xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_6"),
-			([0xAA, 0xBB, 0x07], b"77777xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_7"),
-			([0xAA, 0xBB, 0x08], b"88888xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_8"),
-			([0xAA, 0xBB, 0x09], b"99999xxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_9"),
-			([0xAA, 0xBB, 0x0a], b"aaaaaxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_a"),
-			([0xAA, 0xBB, 0x0b], b"bbbbbxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_b"),
-			([0xAA, 0xBB, 0x0c], b"cccccxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_c"),
-			([0xAA, 0xBB, 0x0d], b"dddddxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_d"),
-			([0xAA, 0xBB, 0x0e], b"eeeeexxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_e"),
-			([0xAA, 0xBB, 0x0f], b"fffffxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_f"),
-			([0xAA, 0xBB, 0x10], b"gggggxxxxxxxxxx_xxxxxxxxxxxxxxx_branch_child_g"),
+		let pure_keys = [
+			(vec![0xAA, 0xBB], 1),
+			(vec![0xAA, 0xBB, 0xCC, 0x00], 29),
+			(vec![0xAA, 0xBB, 0xCC, 0x01], 29),
+			(vec![0xAA, 0xBB, 0xCC, 0x02], 29),
+			(vec![0xAA, 0xBB, 0xCC, 0x03], 29),
+			(vec![0xAA, 0xBB, 0xCC, 0x04], 29),
+			(vec![0xAA, 0xBB, 0xCC, 0x05], 29),
+			(vec![0xAA, 0xBB, 0xCC, 0x06], 29),
+			(vec![0xAA, 0xBB, 0xCC, 0x07], 29),
+			(vec![0xAA, 0xBB, 0xCC, 0x08], 29),
+			(vec![0xAA, 0xBB, 0xCC, 0x09], 30),
+			(vec![0xAA, 0xBB, 0xCC, 0x0a], 30),
 		];
 
+		let keys = pure_keys
+			.iter()
+			.enumerate()
+			.map(|(i, (key, len))| {
+				let value = std::iter::repeat(i as u8).take(*len).collect::<Vec<_>>();
+				(key, value)
+			})
+			.collect::<Vec<_>>();
+		println!("KEYS: {:?}", keys);
+
+		// keys_to_read = keys.iter().map(|k| k.0.clone()).collect();
 		// keys_to_read = keys.iter().take(keys.len() - 1).map(|k| k.0.clone()).collect();
 		keys_to_read = vec![keys.last().unwrap().0.clone()];
+		// keys_to_read = vec![keys[2].0.clone()];
+		// keys_to_read = keys.iter().take(1).map(|k| k.0.clone()).collect();
 
 		for (key, value) in keys {
-			trie.insert(&key, value).unwrap();
+			trie.insert(&key, &value[..]).unwrap();
 		}
 
 		trie.commit();
@@ -1140,6 +1149,7 @@ where
 			.build();
 
 		for key in &keys_to_read {
+			// trie.get(key).unwrap();
 			trie.get(key).unwrap();
 		}
 
@@ -1167,8 +1177,11 @@ where
 
 		// Remove two children, leaving only one
 		// This should show what loads happen during remove() but WITHOUT commit
+		// for key in &keys_to_read {
+		// 	trie.remove(key).unwrap();
+		// }
 		for key in &keys_to_read {
-			trie.remove(key).unwrap();
+			trie.insert(key, b"x").unwrap();
 		}
 
 		// Drop trie to release the recorder borrow (this will trigger commit)
