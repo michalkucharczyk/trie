@@ -1096,18 +1096,24 @@ where
 		// Create a structure that will force some nodes to be stored as hashes
 		// when we later access them during merging
 		let pure_keys = [
-			(vec![0xAA, 0xBB], 1),
-			(vec![0xAA, 0xBB, 0xCC, 0x00], 29),
-			(vec![0xAA, 0xBB, 0xCC, 0x01], 29),
-			(vec![0xAA, 0xBB, 0xCC, 0x02], 29),
-			(vec![0xAA, 0xBB, 0xCC, 0x03], 29),
-			(vec![0xAA, 0xBB, 0xCC, 0x04], 29),
-			(vec![0xAA, 0xBB, 0xCC, 0x05], 29),
-			(vec![0xAA, 0xBB, 0xCC, 0x06], 29),
-			(vec![0xAA, 0xBB, 0xCC, 0x07], 29),
-			(vec![0xAA, 0xBB, 0xCC, 0x08], 29),
-			(vec![0xAA, 0xBB, 0xCC, 0x09], 30),
-			(vec![0xAA, 0xBB, 0xCC, 0x0a], 30),
+			// (vec![0xAA, 0xBB], 1),
+			(vec![0xAA, 0xBB, 0xCC, 0x00], 32),
+			(vec![0xAA, 0xBB, 0xCC, 0x01], 32),
+			(vec![0xAA, 0xBB, 0xCC, 0x02], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x03], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x04], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x05], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x06], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x07], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x08], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x09], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0a], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0b], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0c], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0d], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0e], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0f], 32),
+			// (vec![0xAA, 0xBB, 0xCC, 0x10], 32),
 		];
 
 		let keys = pure_keys
@@ -1121,8 +1127,8 @@ where
 		println!("KEYS: {:?}", keys);
 
 		// keys_to_read = keys.iter().map(|k| k.0.clone()).collect();
-		// keys_to_read = keys.iter().take(keys.len() - 1).map(|k| k.0.clone()).collect();
-		keys_to_read = vec![keys.last().unwrap().0.clone()];
+		keys_to_read = keys.iter().take(keys.len() - 1).map(|k| k.0.clone()).collect();
+		// keys_to_read = vec![keys.last().unwrap().0.clone()];
 		// keys_to_read = vec![keys[2].0.clone()];
 		// keys_to_read = keys.iter().take(1).map(|k| k.0.clone()).collect();
 
@@ -1177,12 +1183,12 @@ where
 
 		// Remove two children, leaving only one
 		// This should show what loads happen during remove() but WITHOUT commit
-		// for key in &keys_to_read {
-		// 	trie.remove(key).unwrap();
-		// }
 		for key in &keys_to_read {
-			trie.insert(key, b"x").unwrap();
+			trie.remove(key).unwrap();
 		}
+		// for key in &keys_to_read {
+		// 	trie.insert(key, b"x").unwrap();
+		// }
 
 		// Drop trie to release the recorder borrow (this will trigger commit)
 		trie.commit();
