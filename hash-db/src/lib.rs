@@ -217,12 +217,12 @@ impl<'a, K, V> AsPlainDB<K, V> for &'a mut dyn PlainDB<K, V> {
 	}
 }
 
-/// A wrapper for foldhash that implements Default
-pub struct FoldStdHasher(foldhash::fast::FoldHasher);
+/// A wrapper for rapidhash that implements Default
+pub struct FoldStdHasher<'a>(rapidhash::fast::RapidHasher<'a>);
 
-impl Default for FoldStdHasher {
+impl Default for FoldStdHasher<'_> {
 	fn default() -> Self {
-		Self(foldhash::fast::RandomState::default().build_hasher())
+		Self(rapidhash::fast::RandomState::default().build_hasher())
 	}
 }
 
@@ -230,7 +230,7 @@ impl Default for FoldStdHasher {
 use core::hash::{BuildHasher as _, Hasher as _};
 #[cfg(feature = "std")]
 use std::hash::{BuildHasher as _, Hasher as _};
-impl hash::Hasher for FoldStdHasher {
+impl hash::Hasher for FoldStdHasher<'_> {
 	fn finish(&self) -> u64 {
 		self.0.finish()
 	}
@@ -240,7 +240,7 @@ impl hash::Hasher for FoldStdHasher {
 	}
 }
 
-/// Generic `Hasher` impl for the FoldHash algorithm
+/// Generic `Hasher` impl for the rapidhash algorithm
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct FoldHasher<H: Hasher>(core::marker::PhantomData<H>);
 
@@ -250,15 +250,16 @@ impl<H: Hasher> Hasher for FoldHasher<H> {
 	const LENGTH: usize = H::LENGTH;
 
 	fn hash(x: &[u8]) -> Self::Out {
-		let mut hasher = foldhash::fast::RandomState::default().build_hasher();
-		hasher.write(x);
-		let hash_u64 = hasher.finish();
-
-		// Put the 8-byte hash at the beginning of the result
-		let mut result = H::Out::default();
-		let result_bytes = result.as_mut();
-		let copy_len = core::cmp::min(8, result_bytes.len());
-		result_bytes[..copy_len].copy_from_slice(&hash_u64.to_le_bytes()[..copy_len]);
-		result
+		// let mut hasher = rapidhash::fast::RandomState::default().build_hasher();
+		// hasher.write(x);
+		// let hash_u64 = hasher.finish();
+		//
+		// // Put the 8-byte hash at the beginning of the result
+		// let mut result = H::Out::default();
+		// let result_bytes = result.as_mut();
+		// let copy_len = core::cmp::min(8, result_bytes.len());
+		// result_bytes[..copy_len].copy_from_slice(&hash_u64.to_le_bytes()[..copy_len]);
+		// result
+		H::hash(x)
 	}
 }
