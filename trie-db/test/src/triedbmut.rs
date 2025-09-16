@@ -890,3 +890,183 @@ fn test_two_assets_memory_db_inner_2<T: TrieLayout>() {
 	assert_eq!(state.get(key2.as_ref()).unwrap().unwrap(), data2);
 	assert_eq!(state.get(key3.as_ref()).unwrap().unwrap(), data3);
 }
+
+fn dump_recorder_accesses<T: TrieLayout>(
+	recorded_entries: &[trie_db::recorder::Record<<T::Hash as hash_db::Hasher>::Out>],
+	title: &str,
+) where
+	T::Hash: hash_db::Hasher,
+{
+	// Deduplicate entries by hash
+	let mut seen_hashes = std::collections::HashSet::new();
+	let unique_entries: Vec<_> = recorded_entries
+		.iter()
+		.filter(|entry| seen_hashes.insert(entry.hash.clone()))
+		.collect();
+
+	println!(
+		"\n{} {} database accesses ({} unique):",
+		title,
+		recorded_entries.len(),
+		unique_entries.len()
+	);
+
+	for (i, entry) in unique_entries.iter().enumerate() {
+		println!(
+			"  Access {}: hash=0x{}, data_len={} bytes",
+			i + 1,
+			hex::encode(&entry.hash.as_ref()[..8]),
+			entry.data.len(),
+		);
+	}
+	println!("all accesses (no dedup):");
+	for (i, entry) in recorded_entries.iter().enumerate() {
+		println!(
+			"  Access {}: hash=0x{}, data_len={} bytes",
+			i + 1,
+			hex::encode(&entry.hash.as_ref()[..8]),
+			entry.data.len(),
+		);
+	}
+}
+
+#[test]
+fn test_storage_root_computation_loads() {
+	test_storage_root_computation_loads_internal::<HashedValueNoExt>();
+}
+
+fn test_storage_root_computation_loads_internal<T: TrieLayout>()
+where
+	T: TrieLayout,
+	T::Hash: Hasher,
+{
+	use trie_db::Recorder;
+
+	println!(">>>>>>>> Using no-extension layout: {}", std::any::type_name::<T>());
+
+	let mut memdb = PrefixedMemoryDB::<T>::default();
+	let mut root = Default::default();
+
+	let mut keys_to_read = vec![];
+
+	{
+		let mut trie = TrieDBMutBuilder::<T>::new(&mut memdb, &mut root).build();
+
+		let pure_keys = [
+			(vec![0xAA, 0xBB, 0xCC, 0x00], 2),
+			(vec![0xAA, 0xBB, 0xCC, 0x01], 2),
+			(vec![0xAA, 0xBB, 0xCC, 0x02], 2),
+			(vec![0xAA, 0xBB, 0xCC, 0x03], 2),
+			(vec![0xAA, 0xBB, 0xCC, 0x04], 2),
+		];
+
+		let keys = pure_keys
+			.iter()
+			.enumerate()
+			.map(|(i, (key, len))| {
+				let value = std::iter::repeat_n(i as u8, *len).collect::<Vec<_>>();
+				(key, value)
+			})
+			.collect::<Vec<_>>();
+		println!("KEYS: {:?}", keys.len());
+
+		keys_to_read = keys.iter().take(2).map(|k| k.0.clone()).collect();
+
+		for (key, value) in keys {
+			trie.insert(key, &value[..]).unwrap();
+		}
+
+		trie.commit();
+	}
+
+	println!(">root initial : {:?}", hex::encode(root));
+	println!(">mem db len: {}", memdb.len());
+
+	// Step 2 ================================================================================
+	let mut memdb_clone = memdb.clone();
+	let mut root_clone = root;
+
+	let mut read_recorder = Recorder::<T>::new();
+	let read_recorded_entries = {
+		let mut cache = TestTrieCache::<T>::default();
+		println!("\n>>>>>>>> GET  operations on initial database");
+		println!(">root before : {:?}", hex::encode(root_clone));
+		let trie = TrieDBMutBuilder::<T>::from_existing(&mut memdb_clone, &mut root_clone)
+			.with_recorder(&mut read_recorder)
+			.with_cache(&mut cache)
+			.build();
+
+		for key in &keys_to_read {
+			let v = trie.get(key).unwrap();
+			println!(">get (2) : {:?} {:?}", hex::encode(key), v.map(hex::encode));
+		}
+
+		drop(trie);
+		read_recorder.drain()
+	};
+
+	dump_recorder_accesses::<T>(&read_recorded_entries, ">>>> GET operations captured");
+	println!(">>>> GET operations captured: memdb.get_count: {}", memdb_clone.get_count.borrow());
+
+	// Step 3 (TrieDB - read only) ============================================================
+	let memdb_clone = memdb.clone();
+	let root_clone = root;
+
+	let mut read_recorder = Recorder::<T>::new();
+	let read_recorded_entries = {
+		println!("\n>>>>>>>> GET (read) operations on initial database");
+		println!(">root before: {:?}", hex::encode(root_clone));
+		let mut cache = TestTrieCache::<T>::default();
+		let trie = TrieDBBuilder::<T>::new(&memdb_clone, &root_clone)
+			.with_recorder(&mut read_recorder)
+			.with_cache(&mut cache)
+			.build();
+
+		for key in &keys_to_read {
+			let v = trie.get(key).unwrap();
+			println!(">get (3) : {:?} {:?}", hex::encode(key), v.map(hex::encode));
+		}
+
+		read_recorder.drain()
+	};
+
+	dump_recorder_accesses::<T>(
+		&read_recorded_entries,
+		">>>> GET (read) operations
+	captured",
+	);
+	println!(
+		">>>> GET (read) operations captured: memdb.get_count: {}",
+		memdb_clone.get_count.borrow()
+	);
+
+	// Step 4 (================================================================================
+	let mut memdb_clone = memdb.clone();
+	let mut root_clone = root;
+
+	let mut remove_recorder = Recorder::<T>::new();
+	let remove_recorded_entries = {
+		println!("\n>>>>>>>> INSERT operations on initial database");
+		println!(">root before : 0x{}", hex::encode(root_clone));
+		let mut cache = TestTrieCache::<T>::default();
+
+		let mut trie = TrieDBMutBuilder::<T>::from_existing(&mut memdb_clone, &mut root_clone)
+			.with_recorder(&mut remove_recorder)
+			.with_cache(&mut cache)
+			.build();
+
+		for key in &keys_to_read {
+			let v = trie.insert(key, &[0x66; 2]).unwrap();
+			println!("> insert : {:?} {:?}", hex::encode(key), v);
+		}
+
+		drop(trie);
+		remove_recorder.drain()
+	};
+
+	dump_recorder_accesses::<T>(&remove_recorded_entries, ">>>> INSERT operations captured");
+	println!(
+		">>>> INSERT operations captured: memdb.get_count: {}",
+		memdb_clone.get_count.borrow()
+	);
+}

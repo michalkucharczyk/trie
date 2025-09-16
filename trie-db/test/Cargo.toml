@@ -22,6 +22,7 @@ hex-literal = "0.4"
 criterion = "0.5.1"
 env_logger = { version = "0.10", default-features = false }
 log = "0.4"
+hex = "0.4"
 
 [dev-dependencies]
 array-bytes = "6.0.0"
