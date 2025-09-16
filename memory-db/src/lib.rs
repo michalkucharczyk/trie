@@ -96,6 +96,16 @@ where
 	pub get_count: RefCell<usize>,
 }
 
+impl<H, KF, T, S> MemoryDB<H, KF, T, S>
+where
+	H: KeyHasher,
+	KF: KeyFunction<H>,
+{
+	pub fn len(&self) -> usize {
+		self.data.len()
+	}
+}
+
 impl<H, KF, T, S> Clone for MemoryDB<H, KF, T, S>
 where
 	H: KeyHasher,
