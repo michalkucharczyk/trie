@@ -19,7 +19,7 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
-use core::hash::BuildHasher;
+use core::{cell::RefCell, hash::BuildHasher};
 use hash_db::{
 	AsHashDB, AsPlainDB, HashDB, HashDBRef, Hasher as KeyHasher, MaybeDebug, PlainDB, PlainDBRef,
 	Prefix,
@@ -96,6 +96,7 @@ where
 	hashed_null_node: H::Out,
 	null_node_data: T,
 	_kf: PhantomData<KF>,
+	pub get_count: RefCell<usize>,
 }
 
 impl<H, KF, T, S> Clone for MemoryDB<H, KF, T, S>
@@ -111,6 +112,7 @@ where
 			hashed_null_node: self.hashed_null_node,
 			null_node_data: self.null_node_data.clone(),
 			_kf: Default::default(),
+			get_count: Default::default(),
 		}
 	}
 }
@@ -321,6 +323,7 @@ where
 			hashed_null_node: H::hash(null_key),
 			null_node_data,
 			_kf: Default::default(),
+			get_count: Default::default(),
 		}
 	}
 
@@ -494,6 +497,7 @@ where
 	S: BuildHasher + Default + Send + Sync,
 {
 	fn get(&self, key: &H::Out, prefix: Prefix) -> Option<T> {
+		*self.get_count.borrow_mut() += 1;
 		if key == &self.hashed_null_node {
 			return Some(self.null_node_data.clone())
 		}
