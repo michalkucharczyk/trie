@@ -705,7 +705,7 @@ impl<'db, L: TrieLayout> TrieDBMutBuilder<'db, L> {
 		TrieDBMutBase {
 			db: self.db,
 			root: self.root,
-			cache: self.cache,
+			cache: self.cache.map(core::cell::RefCell::new),
 			recorder: self.recorder.map(core::cell::RefCell::new),
 			storage: NodeStorage::empty(),
 			death_row: Default::default(),
@@ -720,7 +720,7 @@ impl<'db, L: TrieLayout> TrieDBMutBuilder<'db, L> {
 		let base = TrieDBMutBase {
 			db: self.db,
 			root: self.root,
-			cache: self.cache,
+			cache: self.cache.map(core::cell::RefCell::new),
 			recorder: self.recorder.map(core::cell::RefCell::new),
 			storage: NodeStorage::empty(),
 			death_row: Default::default(),
@@ -771,7 +771,7 @@ where
 	root_handle: NodeHandle<TrieHash<L>>,
 	death_row: Set<(TrieHash<L>, (BackingByteVec, Option<u8>))>,
 	/// Optional cache for speeding up the lookup of nodes.
-	cache: Option<&'a mut dyn TrieCache<L::Codec>>,
+	cache: Option<core::cell::RefCell<&'a mut dyn TrieCache<L::Codec>>>,
 	/// Optional trie recorder for recording trie accesses.
 	recorder: Option<core::cell::RefCell<&'a mut dyn TrieRecorder<TrieHash<L>>>>,
 }
@@ -824,14 +824,22 @@ where
 		// the node if it wasn't there, because in substrate we only access the node while computing
 		// a new trie (aka some branch). We assume that this node isn't that important
 		// to have it being cached.
-		let node = match self.cache.as_mut().and_then(|c| c.get_node(&hash)) {
-			Some(node) => {
-				if let Some(recorder) = self.recorder.as_mut() {
+		let node = if let Some(cache) = self.cache.as_ref() {
+			if let Some(node) = cache.borrow_mut().get_node(&hash) {
+				if let Some(recorder) = self.recorder.as_ref() {
 					recorder.borrow_mut().record(TrieAccess::NodeOwned { hash, node_owned: &node });
 				}
 
-				Node::from_node_owned(&node, &mut self.storage)
-			},
+				Some(Node::from_node_owned(&node, &mut self.storage))
+			} else {
+				None
+			}
+		} else {
+			None
+		};
+
+		let node = match node {
+			Some(node) => node,
 			None => {
 				let node_encoded = self
 					.db
@@ -901,13 +909,15 @@ where
 		loop {
 			let (mid, child) = match handle {
 				NodeHandle::Hash(hash) => {
+					let mut cache = self.cache.as_ref().map(|c| c.borrow_mut());
 					let mut recorder = self.recorder.as_ref().map(|r| r.borrow_mut());
 
 					return Lookup::<L, _> {
 						db: &self.db,
 						query: |v: &[u8]| v.to_vec(),
 						hash: *hash,
-						cache: None,
+						// cache: None,
+						cache: cache.as_mut().map(|c| &mut ***c as &mut dyn TrieCache<L::Codec>),
 						recorder: recorder
 							.as_mut()
 							.map(|r| &mut ***r as &mut dyn TrieRecorder<TrieHash<L>>),
@@ -1914,8 +1924,9 @@ where
 	/// Cache the given `encoded` node.
 	fn cache_node(&mut self, hash: TrieHash<L>, encoded: &[u8], full_key: Option<NibbleVec>) {
 		// If we have a cache, cache our node directly.
-		if let Some(cache) = self.cache.as_mut() {
-			let node = cache.get_or_insert_node(hash, &mut || {
+		if let Some(cache) = self.cache.as_ref() {
+			let mut cache_borrow = cache.borrow_mut();
+			let node = cache_borrow.get_or_insert_node(hash, &mut || {
 				Ok(L::Codec::decode(&encoded)
 					.ok()
 					.and_then(|n| n.to_owned_node::<L>().ok())
@@ -1962,7 +1973,9 @@ where
 				cache_child_values::<L>(&node, &mut values_to_cache, full_key.clone());
 			}
 
-			values_to_cache.into_iter().for_each(|(k, v)| cache.cache_value_for_key(&k, v));
+			values_to_cache
+				.into_iter()
+				.for_each(|(k, v)| cache_borrow.cache_value_for_key(&k, v));
 		}
 	}
 
@@ -1970,11 +1983,12 @@ where
 	///
 	/// `hash` is the hash of `value`.
 	fn cache_value(&mut self, full_key: &[u8], value: impl Into<Bytes>, hash: TrieHash<L>) {
-		if let Some(cache) = self.cache.as_mut() {
+		if let Some(cache) = self.cache.as_ref() {
 			let value = value.into();
 
+			let mut cache_borrow = cache.borrow_mut();
 			// `get_or_insert` should always return `Ok`, but be safe.
-			let value = if let Ok(value) = cache
+			let value = if let Ok(value) = cache_borrow
 				.get_or_insert_node(hash, &mut || Ok(NodeOwned::Value(value.clone(), hash)))
 				.map(|n| n.data().cloned())
 			{
@@ -1984,7 +1998,7 @@ where
 			};
 
 			if let Some(value) = value {
-				cache.cache_value_for_key(full_key, (value, hash).into())
+				cache_borrow.cache_value_for_key(full_key, (value, hash).into())
 			}
 		}
 	}
