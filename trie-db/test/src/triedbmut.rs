@@ -1050,6 +1050,7 @@ fn dump_recorder_accesses<T: TrieLayout>(
 		.iter()
 		.filter(|entry| seen_hashes.insert(entry.hash.clone()))
 		.collect();
+	// let unique_entries = recorded_entries;
 
 	println!(
 		"\n{} {} database accesses ({} unique):",
@@ -1059,6 +1060,17 @@ fn dump_recorder_accesses<T: TrieLayout>(
 	);
 
 	for (i, entry) in unique_entries.iter().enumerate() {
+		let node_type = analyze_node_type::<T>(&entry.data);
+		println!(
+			"  Access {}: hash=0x{}, data_len={} bytes -> {}",
+			i + 1,
+			hex::encode(&entry.hash.as_ref()[..8]),
+			entry.data.len(),
+			node_type
+		);
+	}
+	println!("all accesses (no dedup):");
+	for (i, entry) in recorded_entries.iter().enumerate() {
 		let node_type = analyze_node_type::<T>(&entry.data);
 		println!(
 			"  Access {}: hash=0x{}, data_len={} bytes -> {}",
@@ -1080,6 +1092,7 @@ where
 	T: TrieLayout,
 	T::Hash: Hasher,
 {
+	// env_logger::init();
 	use trie_db::Recorder;
 
 	println!(">>>>>>>> Using no-extension layout: {}", std::any::type_name::<T>());
@@ -1097,66 +1110,73 @@ where
 		// when we later access them during merging
 		let pure_keys = [
 			// (vec![0xAA, 0xBB], 1),
-			(vec![0xAA, 0xBB, 0xCC, 0x00], 32),
-			(vec![0xAA, 0xBB, 0xCC, 0x01], 32),
-			(vec![0xAA, 0xBB, 0xCC, 0x02], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x03], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x04], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x05], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x06], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x07], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x08], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x09], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x0a], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x0b], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x0c], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x0d], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x0e], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x0f], 32),
-			// (vec![0xAA, 0xBB, 0xCC, 0x10], 32),
+			(vec![0xAA, 0xBB, 0xCC, 0x00], 2),
+			(vec![0xAA, 0xBB, 0xCC, 0x01], 2),
+			(vec![0xAA, 0xBB, 0xCC, 0x02], 2),
+			(vec![0xAA, 0xBB, 0xCC, 0x03], 2),
+			(vec![0xAA, 0xBB, 0xCC, 0x04], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x05], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x06], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x07], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x08], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x09], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0a], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0b], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0c], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0d], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0e], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x0f], 2),
+			// (vec![0xAA, 0xBB, 0xCC, 0x10], 2),
 		];
 
+		// let pure_keys = (0..16)
+		// 	.flat_map(|r| (0..=16).flat_map(move |g| (0..=16).map(move |b| (vec![r, g, b], 2))))
+		// 	.collect::<Vec<_>>();
+		//
 		let keys = pure_keys
 			.iter()
 			.enumerate()
 			.map(|(i, (key, len))| {
-				let value = std::iter::repeat(i as u8).take(*len).collect::<Vec<_>>();
+				let value = std::iter::repeat_n(i as u8, *len).collect::<Vec<_>>();
 				(key, value)
 			})
 			.collect::<Vec<_>>();
-		println!("KEYS: {:?}", keys);
+		println!("KEYS: {:?}", keys.len());
 
 		// keys_to_read = keys.iter().map(|k| k.0.clone()).collect();
-		keys_to_read = keys.iter().take(keys.len() - 1).map(|k| k.0.clone()).collect();
+		// keys_to_read = keys.iter().take(keys.len() - 1).map(|k| k.0.clone()).collect();
 		// keys_to_read = vec![keys.last().unwrap().0.clone()];
 		// keys_to_read = vec![keys[2].0.clone()];
-		// keys_to_read = keys.iter().take(1).map(|k| k.0.clone()).collect();
+		keys_to_read = keys.iter().skip(keys.len() - 5).take(2).map(|k| k.0.clone()).collect();
 
 		for (key, value) in keys {
-			trie.insert(&key, &value[..]).unwrap();
+			trie.insert(key, &value[..]).unwrap();
 		}
 
 		trie.commit();
 	}
 
 	println!(">>>>>>>> Initial structure:");
-	println!(">root initial : {:?}", hex::encode(root));
+	// println!(">root initial : {:?}", hex::encode(root));
 	dump_trie_structure::<T>(&memdb, &root);
 
-	// Step 2: Clone the database and perform READ operations with recorder
-	// This will show what loads occur during normal get() operations
+	// Step 2 ================================================================================
 	let mut memdb_clone = memdb.clone();
-	let root_clone = root;
+	let mut root_clone = root;
 
 	let mut read_recorder = Recorder::<T>::new();
 	let read_recorded_entries = {
-		let trie = TrieDBBuilder::<T>::new(&memdb_clone, &root_clone)
+		let mut cache = TestTrieCache::<T>::default();
+		println!(">root get (2) : {:?}", hex::encode(root_clone));
+		let trie = TrieDBMutBuilder::<T>::from_existing(&mut memdb_clone, &mut root_clone)
 			.with_recorder(&mut read_recorder)
-			.build();
+			.with_cache(&mut cache)
+			.build_base();
 
 		for key in &keys_to_read {
 			// trie.get(key).unwrap();
-			trie.get(key).unwrap();
+			let v = trie.get(key).unwrap();
+			println!(">get (2) : {:?} {:?}", hex::encode(key), v.map(hex::encode));
 		}
 
 		drop(trie);
@@ -1165,42 +1185,81 @@ where
 		read_recorder.drain()
 	};
 
-	dump_recorder_accesses::<T>(&read_recorded_entries, ">>>>>>>> READ operations captured");
+	dump_recorder_accesses::<T>(&read_recorded_entries, ">>>>>>>> GET operations captured");
+	println!(
+		">>>>>>>> GET operations captured: memdb.get_count: {}",
+		memdb_clone.get_count.borrow()
+	);
 
-	// Step 3: Clone the database and perform REMOVE operations with recorder
-	// This will show what loads occur during normal remove() operations WITHOUT commit
+	// // Step 3 ================================================================================
+	// let memdb_clone = memdb.clone();
+	// let root_clone = root;
+	//
+	// let mut read_recorder = Recorder::<T>::new();
+	// let read_recorded_entries = {
+	// 	println!(">root get (3) : {:?}", hex::encode(root_clone));
+	// 	let mut cache = TestTrieCache::<T>::default();
+	// 	let trie = TrieDBBuilder::<T>::new(&memdb_clone, &root_clone)
+	// 		.with_recorder(&mut read_recorder)
+	// 		.with_cache(&mut cache)
+	// 		.build();
+	//
+	// 	for key in &keys_to_read {
+	// 		// trie.get(key).unwrap();
+	// 		let v = trie.get(key).unwrap();
+	// 		println!(">get (3) : {:?} {:?}", hex::encode(key), v.map(hex::encode));
+	// 	}
+	//
+	// 	// Now we can access the recorder
+	// 	read_recorder.drain()
+	// };
+	//
+	// dump_recorder_accesses::<T>(&read_recorded_entries, ">>>>>>>> GET (read) operations
+	// captured"); println!(
+	// 	">>>>>>>> GET (read) operations captured: memdb.get_count: {}",
+	// 	memdb_clone.get_count.borrow()
+	// );
+
+	// Step 4 ================================================================================
 	let mut memdb_clone = memdb.clone();
 	let mut root_clone = root;
 
 	let mut remove_recorder = Recorder::<T>::new();
 	let remove_recorded_entries = {
-		println!("\n>>>>>>>> REMOVE operations on initial database (no commit)");
+		println!("\n>>>>>>>> INSERT operations on initial database");
 		println!(">root before : 0x{}", hex::encode(root_clone));
+		let mut cache = TestTrieCache::<T>::default();
 
 		let mut trie = TrieDBMutBuilder::<T>::from_existing(&mut memdb_clone, &mut root_clone)
 			.with_recorder(&mut remove_recorder)
-			.build();
+			.with_cache(&mut cache)
+			.build_base();
 
 		// Remove two children, leaving only one
 		// This should show what loads happen during remove() but WITHOUT commit
-		for key in &keys_to_read {
-			trie.remove(key).unwrap();
-		}
 		// for key in &keys_to_read {
-		// 	trie.insert(key, b"x").unwrap();
+		// 	trie.remove(key).unwrap();
 		// }
+		for key in &keys_to_read {
+			let v = trie.insert(key, &[0x66; 2]).unwrap();
+			println!("> insert : {:?} {:?}", hex::encode(key), v);
+			// let v = trie.get(key).unwrap();
+			// println!("> get : {:?} {:?}", hex::encode(key), v);
+		}
 
-		// Drop trie to release the recorder borrow (this will trigger commit)
-		trie.commit();
 		drop(trie);
 
 		// Now we can access the recorder
 		remove_recorder.drain()
 	};
 
-	dump_recorder_accesses::<T>(&remove_recorded_entries, ">>>>>>>> REMOVE operations captured");
+	dump_recorder_accesses::<T>(&remove_recorded_entries, ">>>>>>>> INSERT operations captured");
+	println!(
+		">>>>>>>> INSERT operations captured: memdb.get_count: {}",
+		memdb_clone.get_count.borrow()
+	);
 
-	println!("\n>>>>>>>> After storage root computation (merging occurred):");
-	println!(">root after : 0x{}", hex::encode(root_clone));
-	dump_trie_structure::<T>(&memdb_clone, &root_clone);
+	// println!("\n>>>>>>>> After storage root computation (merging occurred):");
+	// println!(">root after : 0x{}", hex::encode(root_clone));
+	// dump_trie_structure::<T>(&memdb_clone, &root_clone);
 }
